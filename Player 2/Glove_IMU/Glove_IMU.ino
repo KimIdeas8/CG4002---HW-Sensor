@@ -1,185 +1,353 @@
-#include <Wire.h>
+#pragma pack(1)
+/* =========================================================================
+   NOTE: In addition to connection 3.3v, GND, SDA, and SCL, this sketch
+   depends on the MPU-6050's INT pin being connected to the Arduino's
+   external interrupt #0 pin. On the Arduino Uno and Mega 2560, this is
+   digital I/O pin 2.
+ * ========================================================================= */
 
-//const int flex1 = A0;
-const int flex2 = A1;
-//const int flex3 = A2;
-//const int flex4 = A3;
-int flex1val, flex2val, flex3val, flex4val;
+#include "I2Cdev.h"
+#include "MPU6050_6Axis_MotionApps20.h"
+// Arduino Wire library is required if I2Cdev I2CDEV_ARDUINO_WIRE implementation
+// is used in I2Cdev.h
+#if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
+    #include "Wire.h"
+#endif
 
-const int MPU = 0X68;
-float AccX, AccY, AccZ;
-float GyroX, GyroY, GyroZ;
-float accAngleX, accAngleY, gyroAngleX, gyroAngleY, gyroAngleZ;
-float roll, pitch, yaw;
-float AccErrorX, AccErrorY, GyroErrorX, GyroErrorY, GyroErrorZ;
-float elapsedTime, currentTime, previousTime;
-int c = 0;
+//int values of yaw,pitch, roll:
+int yaw, pitch, roll;
+// list of the accel X/Y/Z in decimal:
+int ax, ay, az;
 
-void setup() 
+// class default I2C address is 0x68
+// specific I2C addresses may be passed as a parameter here
+// AD0 low = 0x68 (default for SparkFun breakout and InvenSense evaluation board)
+// AD0 high = 0x69
+MPU6050 mpu;
+//MPU6050 mpu(0x69); // <-- use for AD0 high
+
+// yaw/pitch/roll angles (in degrees) calculated from the quaternions coming from the FIFO. Note this also requires gravity vector calculations.
+//#define OUTPUT_READABLE_YAWPITCHROLL
+// acceleration components with gravity removed and adjusted for the world frame of reference (yaw is relative to initial orientation, since no magnetometer
+// is present in this case). Could be quite handy in some cases.
+#define OUTPUT_READABLE_WORLDACCEL
+
+#define INTERRUPT_PIN 2  // use pin 2 on Arduino Uno & most boards
+
+// MPU control/status vars
+bool dmpReady = false;  // set true if DMP init was successful
+uint8_t mpuIntStatus;   // holds actual interrupt status byte from MPU
+uint8_t devStatus;      // return status after each device operation (0 = success, !0 = error)
+uint16_t packetSize;    // expected DMP packet size (default is 42 bytes)
+uint16_t fifoCount;     // count of all bytes currently in FIFO
+uint8_t fifoBuffer[64]; // FIFO storage buffer
+
+// orientation/motion vars
+Quaternion q;           // [w, x, y, z]         quaternion container
+VectorInt16 aa;         // [x, y, z]            accel sensor measurements
+VectorInt16 aaReal;     // [x, y, z]            gravity-free accel sensor measurements
+VectorInt16 aaWorld;    // [x, y, z]            world-frame accel sensor measurements
+VectorFloat gravity;    // [x, y, z]            gravity vector
+float euler[3];         // [psi, theta, phi]    Euler angle container
+float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
+
+const int lastFinger = A2;      // Pin connected to voltage divider output
+const int middleFinger = A3;      // Pin connected to voltage divider output
+int middleFlex, lastFlex = 0;
+
+// Change these constants according to your project's design
+const float VCC = 5;      // voltage at Ardunio 5V line
+const float R_DIV = 10000.0;  // resistor used to create a voltage divider
+
+
+const float middleFlatResistance = 15384.61;// resistance when flat
+const float middleBendResistance = 69921.88;  // resistance at 90 deg
+//open = 38483.41
+//closed - 55159.93
+
+const float lastFlatResistance = 39902.44;// resistance when flat
+const float lastBendResistance = 87428.57;  // resistance at 90 deg
+//open - 14890.51
+//closed - 26666.67
+
+enum PacketType
 {
-  Serial.begin(115200);
+  HELLO,
+  ACK,
+  NACK,
+  DATA
+};
 
-  //Serial.println("Initialize MPU6050");
+typedef struct
+{
+  uint8_t header;           // contains beetle id and packet type
+  uint8_t padding;          // Padding header to 2 bytes
+  int euler_x;              // contains IR data for data packet for IR sensors
+  int euler_y;              // all other fields padded with 0 for data packet for IR sensors
+  int euler_z;
+  int acc_x;
+  int acc_y;
+  int acc_z;
+  int flex_1;
+  int flex_2;
+  uint16_t crc;             // Cyclic redundancy check (CRC-16)
+} BLEPacket; 
 
-  Wire.begin(); //Initialise communication
-  Wire.beginTransmission(MPU); //Start comm. with MPU6050
-  Wire.write(0x6B); //Talk to register 6B => MPU = 0x68
-  Wire.write(0x00); //Make reset - place 0 into 6B register
-  Wire.endTransmission(true); //end transmission
-  
-  //Configure Acc Sensitivity - Full Scale Range(default +/- 8g full scale):
-  Wire.beginTransmission(MPU);
-  Wire.write(0x1B);
-  Wire.write(0x00); //Set the register bits as 00000000 (+-250 deg/s full scale) 
-  Wire.endTransmission(true);
-  delay(20);
+const unsigned int PACKET_SIZE = 20;
 
-  //Configure Gyroscope sensitvity - full scale range:
-  Wire.beginTransmission(MPU);
-  Wire.write(0x1C);
-  Wire.write(0x08); //Set the register bits as 00001000 (+- 4g full scale)
-  Wire.endTransmission(true);
-  delay(20);
+uint8_t serial_buffer[PACKET_SIZE];
+BLEPacket* curr_packet;
 
-  //DLPF(Digital Low-pass filter):
-  Wire.beginTransmission(MPU);
-  Wire.write(0x1A);
-  Wire.write(0x06); //Set the register bits as 00000110 (5Hz bandwidth, 0.19ms delay)
-  Wire.endTransmission(true);
-  delay(20);
-  
-  //Call this function to get IMU errors for module:
-  //calculate_IMU_error();
-  delay(20);
+bool is_connected = false;
+
+BLEPacket default_packets[3];
+
+uint16_t crcCalc(uint8_t* data)
+{
+   uint16_t curr_crc = 0x0000;
+   uint8_t sum1 = (uint8_t) curr_crc;
+   uint8_t sum2 = (uint8_t) (curr_crc >> 8);
+ 
+   for (int i = 0; i < PACKET_SIZE; i++)
+   {
+      sum1 = (sum1 + data[i]) % 255;
+      sum2 = (sum2 + sum1) % 255;
+   }
+   return (sum2 << 8) | sum1;
 }
 
-//following function is called in setup function to calc the accel and gyro readings
-//IMU should be mounted flat, to get proper values
-//read accelerometer values 200 times
-void calculate_IMU_error()
+bool crcCheck()
 {
-  while(c<200){
-    Wire.beginTransmission(MPU);
-    Wire.write(0x3B);
-    Wire.endTransmission(false);
-    Wire.requestFrom(MPU,6,true);
-    AccX = (Wire.read() << 8 | Wire.read()) / 16384.0;
-    AccY = (Wire.read() << 8 | Wire.read()) / 16384.0;
-    AccZ = (Wire.read() << 8 | Wire.read()) / 16384.0;
+  uint16_t crc = curr_packet->crc;
+  curr_packet->crc = 0;
+  return (crc == crcCalc((uint8_t*)curr_packet));
+}
 
-    //Sum all readings:
-    AccErrorX = AccErrorX + ((atan(AccY) / sqrt(pow((AccX),2) + pow((AccZ),2))) * 180 / PI);
-    AccErrorY = AccErrorY + ((atan(-1 * AccX) / sqrt(pow((AccY),2) + pow((AccZ),2))) * 180 / PI);
+bool packetCheck(uint8_t node_id, PacketType packet_type)
+{
+  uint8_t header = curr_packet->header;
+  uint8_t curr_node_id = (header & 0xf0) >> 4;
+  PacketType curr_packet_type = PacketType(header & 0xf);
+  return curr_node_id == node_id && curr_packet_type == packet_type;
+}
+
+void waitForData()
+{
+  unsigned int buf_pos = 0;
+  while (buf_pos < PACKET_SIZE)
+  {
+    if (Serial.available())
+    {
+      uint8_t in_data = Serial.read();
+      serial_buffer[buf_pos] = in_data;
+      buf_pos++;
+    }
+  }
+  curr_packet = (BLEPacket*)serial_buffer;
+}
+
+BLEPacket generatePacket(PacketType packet_type, int* data)
+{
+  BLEPacket p;
+  p.header = (3 << 4) | packet_type;
+  p.padding = 0;
+  p.euler_x = data[0];
+  p.euler_y = data[1];
+  p.euler_z = data[2];
+  p.acc_x = data[3];
+  p.acc_y = data[4];
+  p.acc_z = data[5];
+  p.flex_1 = data[6];
+  p.flex_2 = data[7];
+  p.crc = 0;
+  uint16_t calculatedCRC = crcCalc((uint8_t*)&p);
+  p.crc = calculatedCRC;
+  return p;
+}
+
+void generateDefaultPackets()
+{
+  int data[] = {0, 0, 0, 0, 0, 0, 0, 0};
+  for (int i = 0; i < 3; i++)
+  {
+    default_packets[i] = generatePacket(PacketType(i), data);
+  }
+}
+
+void sendDefaultPacket(PacketType packet_type)
+{
+  Serial.write((byte*)&default_packets[packet_type], PACKET_SIZE);
+}
+
+void sendDataPacket(int* data)
+{
+  BLEPacket p = generatePacket(DATA, data);
+  Serial.write((byte*)&p, PACKET_SIZE);
+}
+
+void threeWayHandshake()
+{
+//  bool is_connected = false;
+  while (!is_connected)
+  {
+    // wait for hello from laptop
+    waitForData();
+  
+    if (!crcCheck() or !packetCheck(0, HELLO))
+    {
+      sendDefaultPacket(NACK);
+      continue;
+    } 
+    sendDefaultPacket(HELLO);
     
-    c++;
+    // wait for ack from laptop
+    waitForData();
+    
+    if (crcCheck() && packetCheck(0, ACK))
+    {
+      is_connected = true;
+    }
   }
-
-  //Divide the sum by 200 to get the average error value
-  AccErrorX = AccErrorX / 200;
-  AccErrorY = AccErrorY / 200;
-
-  c=0;
-  while(c<200) {
-    Wire.beginTransmission(MPU);
-    Wire.write(0x43);
-    Wire.endTransmission(false);
-    Wire.requestFrom(MPU,6,true);
-    GyroX = Wire.read() << 8 | Wire.read();
-    GyroY = Wire.read() << 8 | Wire.read();
-    GyroZ = Wire.read() << 8 | Wire.read();
-
-    //Sum all readings:
-    GyroErrorX = GyroErrorX + (GyroX / 131.0);
-    GyroErrorY = GyroErrorY + (GyroY / 131.0);
-    GyroErrorZ = GyroErrorZ + (GyroZ / 131.0);
-
-    c++;
-  }
-  //Divide the sum by 200 to get the average error value
-  GyroErrorX = GyroErrorX / 200;
-  GyroErrorY = GyroErrorY / 200;
-  GyroErrorZ = GyroErrorZ / 200;
-
-  //Print the error values on the Serial Monitor:
-  Serial.print("AccErrorX: ");
-  Serial.println(AccErrorX);
-  Serial.print("AccErrorY: ");
-  Serial.println(AccErrorY);
-  Serial.print("GyroErrorX: ");
-  Serial.println(GyroErrorX);
-  Serial.print("GyroErrorY: ");
-  Serial.println(GyroErrorY);
-  Serial.print("GyroErrorZ: ");
-  Serial.println(GyroErrorZ);
 }
 
-void loop()
-{ 
-  
-  //Read flex sensor values:
-  //flex1val = analogRead(flex1);
-  flex2val = analogRead(flex2);
-  //flex3val = analogRead(flex3);
-  //flex4val = analogRead(flex4);
-  //print values on serial monitor:
-  //Serial.println(flex1val);
-  Serial.println(flex2val);
-  //Serial.println(flex3val);
-  //Serial.println(flex4val);
-  delay(1000);
-  
-  //Read accelerometer data
-  Wire.beginTransmission(MPU);
-  Wire.write(0x3B); //Starts with register 0x3B (ACCEL_XOUT_H)
-  Wire.endTransmission(false);
-  Wire.requestFrom(MPU,6,true); //read 6 registers in total, each axis value is stored 
-  //for a range of +/- 2g, value of 16384 is to be used
-  AccX = (Wire.read() << 8 | Wire.read()) / 16384.0; //unit: g
-  AccY = (Wire.read() << 8 | Wire.read()) / 16384.0; //divide by 16384 LSB/g
-  AccZ = (Wire.read() << 8 | Wire.read()) / 16384.0;  
-  //Calculating Roll and Pitch from Accel data:
-  accAngleX = (atan(AccY / sqrt((pow(AccX,2)) + pow(AccZ,2))) * 180 / PI) - 0.57; //Roll - AccError
-  accAngleY = (atan(-1*AccX / sqrt(pow(AccY,2) + pow(AccZ,2))) * 180 / PI) + 2.90; //Pitch - AccError
-  //extra step for converting g to ms^-2:
-  AccX = AccX * 9.806; //unit: ms^-2
-  AccY = AccY * 9.806;
-  AccZ = AccZ * 9.806;
-  
-  //Read Gyroscope data:
-  previousTime = currentTime; //previous time is stored before the actual time 
-  currentTime = millis(); 
-  elapsedTime = (currentTime - previousTime) / 1000; //divide by 1000 to get elasped time in s
-  Wire.beginTransmission(MPU); //start reading data
-  Wire.write(0x43); //starts from register 0x43 (GYRO_XOUT_H)
-  Wire.endTransmission(false);
-  Wire.requestFrom(MPU,6,true); //read 6 registers total, each axis value is stored in each register
-  GyroX = (Wire.read() << 8 | Wire.read()) / 131.0; //unit: deg/s
-  GyroY = (Wire.read() << 8 | Wire.read()) / 131.0; //divide by 131 LSB/deg/s
-  GyroZ = (Wire.read() << 8 | Wire.read()) / 131.0;
-  //Correct the outputs with the calculated error values:
-  GyroX = GyroX - 0.52; //GyroErrorX (~0.56)
-  GyroY = GyroY + 0.09; //GyroErrorY(~2)
-  GyroZ = GyroZ - 0.02; //GyroErrorZ(~0.8)
-  //Currently, the raw values are in deg/s, so need to multiply the time elasped to obtain the angle:
-  gyroAngleX = gyroAngleX + GyroX * elapsedTime; //deg/s * s = deg
-  gyroAngleY = gyroAngleY + GyroY * elapsedTime;
-  yaw = yaw + GyroZ* elapsedTime;
 
-  //Complimentary filter to account for accumulated error (drift) of gyroscope values over time - combine accelerometer and gyro angle values
-  roll = 0.96  * gyroAngleX + 0.04 * accAngleX; //since data from gyroscope suffers from drift over time, 4% of accelerometer value to eliminate the gyroscope drift error
-  pitch = 0.96 * gyroAngleY + 0.04 * accAngleY;
+
+// ================================================================
+// ===               INTERRUPT DETECTION ROUTINE                ===
+// ================================================================
+
+volatile bool mpuInterrupt = false;     // indicates whether MPU interrupt pin has gone high
+void dmpDataReady() {
+    mpuInterrupt = true;
+}
+
+
+
+// ================================================================
+// ===                      INITIAL SETUP                       ===
+// ================================================================
+
+void setup() {
+    // join I2C bus (I2Cdev library doesn't do this automatically)
+    #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
+        Wire.begin();
+        Wire.setClock(400000); // 400kHz I2C clock. Comment this line if having compilation difficulties
+    #elif I2CDEV_IMPLEMENTATION == I2CDEV_BUILTIN_FASTWIRE
+        Fastwire::setup(400, true);
+    #endif
+
+    // initialize serial communication
+    // (115200 chosen because it is required for Teapot Demo output, but it's
+    // really up to you depending on your project)
+    Serial.begin(115200);
+
+    // initialize device
+    mpu.initialize();
+    pinMode(INTERRUPT_PIN, INPUT);
+
+    // verify connection
+    mpu.testConnection();
+
+    // load and configure the DMP
+    devStatus = mpu.dmpInitialize();
+    //set DPLF
+    mpu.setDLPFMode(MPU6050_DLPF_BW_5);
+    
+    // use the code below to change accel/gyro offset values
+    // supply your own gyro acc offsets here, scaled for min sensitivity
+    mpu.setXAccelOffset(-587); 
+    mpu.setYAccelOffset(-2467); 
+    mpu.setZAccelOffset(1039); 
+    mpu.setXGyroOffset(-56);
+    mpu.setYGyroOffset(80);
+    mpu.setZGyroOffset(36);
+
+    // make sure it worked (returns 0 if so)
+    if (devStatus == 0) {
+        // Calibration Time: generate offsets and calibrate our MPU6050
+        mpu.CalibrateAccel(6);
+        mpu.CalibrateGyro(6);
+
+        mpu.setDMPEnabled(true);
+
+        // enable Arduino interrupt detection
+        digitalPinToInterrupt(INTERRUPT_PIN);
+        attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpDataReady, RISING);
+        mpuIntStatus = mpu.getIntStatus();
+
+        // set our DMP Ready flag so the main loop() function knows it's okay to use it
+        dmpReady = true;
+
+        // get expected DMP packet size for later comparison
+        packetSize = mpu.dmpGetFIFOPacketSize();
+    }
+
+   generateDefaultPackets();
+   threeWayHandshake();
+ 
+}
+
+
+
+// ================================================================
+// ===                    MAIN PROGRAM LOOP                     ===
+// ================================================================
+
+void loop() {
   
-  //print values on serial monitor:
-  Serial.print(AccX);
-  Serial.print(",");
-  Serial.print(AccY);
-  Serial.print(",");
-  Serial.println(AccZ);
-  Serial.print(",");
-  Serial.print(roll);
-  Serial.print(",");
-  Serial.print(pitch);
-  Serial.print(",");
-  Serial.println(yaw);
-  
+  delay(50); // frequency of 20Hz
+  if (Serial.available()) {
+    is_connected = false;
+    threeWayHandshake();
+  }
+  else
+  {
+      int data[8];
+      // if programming failed, don't try to do anything
+      if (!dmpReady) return;
+      
+      // read a packet from FIFO
+      if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) { // Get the Latest packet 
+
+            
+            middleFlex = analogRead(middleFinger);
+            float middleVflex = middleFlex * VCC / 1023.0;
+            float middleRflex = R_DIV * (VCC / middleVflex - 1.0);
+            int middleAngle = map(middleRflex, middleFlatResistance, middleBendResistance, 0, 90.0);
+            data[6] = middleAngle;
+            
+            lastFlex = analogRead(lastFinger);
+            float lastVflex = lastFlex * VCC / 1023.0;
+            float lastRflex = R_DIV * (VCC / lastVflex - 1.0);
+            int lastAngle = map(lastRflex, lastFlatResistance, lastBendResistance, 0, 90.0);
+            data[7] = lastAngle;
+        
+            // display Euler angles in degrees
+            mpu.dmpGetQuaternion(&q, fifoBuffer);
+            mpu.dmpGetGravity(&gravity, &q);
+            mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+            int yaw = ypr[0] * 180/M_PI;
+            data[0] = yaw;
+            
+            int pitch = ypr[1] * 180/M_PI;
+            data[1] = pitch;
+            
+            int roll = ypr[2] * 180/M_PI;
+            data[2] = roll;
+              
+            // display initial world-frame acceleration, adjusted to remove gravity - scaled values from ms^-2
+            // and rotated based on known orientation from quaternion
+            mpu.dmpGetAccel(&aa, fifoBuffer);
+            mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
+            mpu.dmpGetLinearAccelInWorld(&aaWorld, &aaReal, &q);
+            ax = aaWorld.x;
+            ay = aaWorld.y;
+            az = aaWorld.z;
+            data[3] = ax;
+            data[4] = ay;
+            data[5] = az;
+          
+      }
+      sendDataPacket(data); 
+  }
 }

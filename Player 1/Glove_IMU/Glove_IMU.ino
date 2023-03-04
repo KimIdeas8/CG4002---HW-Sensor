@@ -1,10 +1,11 @@
-
+#pragma pack(1)
 /* =========================================================================
    NOTE: In addition to connection 3.3v, GND, SDA, and SCL, this sketch
    depends on the MPU-6050's INT pin being connected to the Arduino's
    external interrupt #0 pin. On the Arduino Uno and Mega 2560, this is
    digital I/O pin 2.
  * ========================================================================= */
+
 #include "I2Cdev.h"
 #include "MPU6050_6Axis_MotionApps20.h"
 // Arduino Wire library is required if I2Cdev I2CDEV_ARDUINO_WIRE implementation
@@ -13,10 +14,10 @@
     #include "Wire.h"
 #endif
 
+//int values of yaw,pitch, roll:
+int yaw, pitch, roll;
 // list of the accel X/Y/Z in decimal:
-float ax, ay, az;
-#define OUTPUT_READABLE_ACCEL
-
+int ax, ay, az;
 
 // class default I2C address is 0x68
 // specific I2C addresses may be passed as a parameter here
@@ -26,7 +27,10 @@ MPU6050 mpu;
 //MPU6050 mpu(0x69); // <-- use for AD0 high
 
 // yaw/pitch/roll angles (in degrees) calculated from the quaternions coming from the FIFO. Note this also requires gravity vector calculations.
-#define OUTPUT_READABLE_YAWPITCHROLL
+//#define OUTPUT_READABLE_YAWPITCHROLL
+// acceleration components with gravity removed and adjusted for the world frame of reference (yaw is relative to initial orientation, since no magnetometer
+// is present in this case). Could be quite handy in some cases.
+#define OUTPUT_READABLE_WORLDACCEL
 
 #define INTERRUPT_PIN 2  // use pin 2 on Arduino Uno & most boards
 
@@ -41,8 +45,172 @@ uint8_t fifoBuffer[64]; // FIFO storage buffer
 // orientation/motion vars
 Quaternion q;           // [w, x, y, z]         quaternion container
 VectorInt16 aa;         // [x, y, z]            accel sensor measurements
+VectorInt16 aaReal;     // [x, y, z]            gravity-free accel sensor measurements
+VectorInt16 aaWorld;    // [x, y, z]            world-frame accel sensor measurements
 VectorFloat gravity;    // [x, y, z]            gravity vector
+float euler[3];         // [psi, theta, phi]    Euler angle container
 float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
+
+const int lastFinger = A2;      // Pin connected to voltage divider output
+const int middleFinger = A3;      // Pin connected to voltage divider output
+int middleFlex, lastFlex = 0;
+
+// Change these constants according to your project's design
+const float VCC = 5;      // voltage at Ardunio 5V line
+const float R_DIV = 10000.0;  // resistor used to create a voltage divider
+
+
+const float middleFlatResistance = 15384.61;// resistance when flat
+const float middleBendResistance = 69921.88;  // resistance at 90 deg
+//open = 38483.41
+//closed - 55159.93
+
+const float lastFlatResistance = 39902.44;// resistance when flat
+const float lastBendResistance = 87428.57;  // resistance at 90 deg
+//open - 14890.51
+//closed - 26666.67
+
+enum PacketType
+{
+  HELLO,
+  ACK,
+  NACK,
+  DATA
+};
+
+typedef struct
+{
+  uint8_t header;           // contains beetle id and packet type
+  uint8_t padding;          // Padding header to 2 bytes
+  int euler_x;              // contains IR data for data packet for IR sensors
+  int euler_y;              // all other fields padded with 0 for data packet for IR sensors
+  int euler_z;
+  int acc_x;
+  int acc_y;
+  int acc_z;
+  int flex_1;
+  int flex_2;
+  uint16_t crc;             // Cyclic redundancy check (CRC-16)
+} BLEPacket; 
+
+const unsigned int PACKET_SIZE = 20;
+
+uint8_t serial_buffer[PACKET_SIZE];
+BLEPacket* curr_packet;
+
+bool is_connected = false;
+
+BLEPacket default_packets[3];
+
+uint16_t crcCalc(uint8_t* data)
+{
+   uint16_t curr_crc = 0x0000;
+   uint8_t sum1 = (uint8_t) curr_crc;
+   uint8_t sum2 = (uint8_t) (curr_crc >> 8);
+ 
+   for (int i = 0; i < PACKET_SIZE; i++)
+   {
+      sum1 = (sum1 + data[i]) % 255;
+      sum2 = (sum2 + sum1) % 255;
+   }
+   return (sum2 << 8) | sum1;
+}
+
+bool crcCheck()
+{
+  uint16_t crc = curr_packet->crc;
+  curr_packet->crc = 0;
+  return (crc == crcCalc((uint8_t*)curr_packet));
+}
+
+bool packetCheck(uint8_t node_id, PacketType packet_type)
+{
+  uint8_t header = curr_packet->header;
+  uint8_t curr_node_id = (header & 0xf0) >> 4;
+  PacketType curr_packet_type = PacketType(header & 0xf);
+  return curr_node_id == node_id && curr_packet_type == packet_type;
+}
+
+void waitForData()
+{
+  unsigned int buf_pos = 0;
+  while (buf_pos < PACKET_SIZE)
+  {
+    if (Serial.available())
+    {
+      uint8_t in_data = Serial.read();
+      serial_buffer[buf_pos] = in_data;
+      buf_pos++;
+    }
+  }
+  curr_packet = (BLEPacket*)serial_buffer;
+}
+
+BLEPacket generatePacket(PacketType packet_type, int* data)
+{
+  BLEPacket p;
+  p.header = (3 << 4) | packet_type;
+  p.padding = 0;
+  p.euler_x = data[0];
+  p.euler_y = data[1];
+  p.euler_z = data[2];
+  p.acc_x = data[3];
+  p.acc_y = data[4];
+  p.acc_z = data[5];
+  p.flex_1 = data[6];
+  p.flex_2 = data[7];
+  p.crc = 0;
+  uint16_t calculatedCRC = crcCalc((uint8_t*)&p);
+  p.crc = calculatedCRC;
+  return p;
+}
+
+void generateDefaultPackets()
+{
+  int data[] = {0, 0, 0, 0, 0, 0, 0, 0};
+  for (int i = 0; i < 3; i++)
+  {
+    default_packets[i] = generatePacket(PacketType(i), data);
+  }
+}
+
+void sendDefaultPacket(PacketType packet_type)
+{
+  Serial.write((byte*)&default_packets[packet_type], PACKET_SIZE);
+}
+
+void sendDataPacket(int* data)
+{
+  BLEPacket p = generatePacket(DATA, data);
+  Serial.write((byte*)&p, PACKET_SIZE);
+}
+
+void threeWayHandshake()
+{
+//  bool is_connected = false;
+  while (!is_connected)
+  {
+    // wait for hello from laptop
+    waitForData();
+  
+    if (!crcCheck() or !packetCheck(0, HELLO))
+    {
+      sendDefaultPacket(NACK);
+      continue;
+    } 
+    sendDefaultPacket(HELLO);
+    
+    // wait for ack from laptop
+    waitForData();
+    
+    if (crcCheck() && packetCheck(0, ACK))
+    {
+      is_connected = true;
+    }
+  }
+}
+
+
 
 // ================================================================
 // ===               INTERRUPT DETECTION ROUTINE                ===
@@ -74,70 +242,54 @@ void setup() {
     Serial.begin(115200);
     
     // initialize device
-    while (!Serial); // wait for Leonardo enumeration, others continue immediately
+    //while (!Serial); // wait for Leonardo enumeration, others continue immediately
 
     // initialize device
-    Serial.println(F("Initializing I2C devices..."));
     mpu.initialize();
     pinMode(INTERRUPT_PIN, INPUT);
 
     // verify connection
-    Serial.println(F("Testing device connections..."));
-    Serial.println(mpu.testConnection() ? F("MPU6050 connection successful") : F("MPU6050 connection failed"));
+    mpu.testConnection();
 
     // wait for ready
-    Serial.println(F("\nSend any character to begin DMP programming and demo: "));
-    while (Serial.available() && Serial.read()); // empty buffer
-    while (!Serial.available());                 // wait for data
-    while (Serial.available() && Serial.read()); // empty buffer again
+    //while (Serial.available() && Serial.read()); // empty buffer
 
     // load and configure the DMP
-    Serial.println(F("Initializing DMP..."));
     devStatus = mpu.dmpInitialize();
-
+    //set DPLF
+    mpu.setDLPFMode(MPU6050_DLPF_BW_5);
+    
     // use the code below to change accel/gyro offset values
-    Serial.println("Updating internal sensor offsets...");
-    Serial.print("\n");
     // supply your own gyro acc offsets here, scaled for min sensitivity
-    mpu.setXAccelOffset(1801); 
-    mpu.setYAccelOffset(629); 
-    mpu.setZAccelOffset(441); 
-    mpu.setXGyroOffset(33);
-    mpu.setYGyroOffset(41);
-    mpu.setZGyroOffset(-88);
+    mpu.setXAccelOffset(-515); 
+    mpu.setYAccelOffset(-2771); 
+    mpu.setZAccelOffset(1009); 
+    mpu.setXGyroOffset(-55);
+    mpu.setYGyroOffset(78);
+    mpu.setZGyroOffset(36);
 
     // make sure it worked (returns 0 if so)
     if (devStatus == 0) {
         // Calibration Time: generate offsets and calibrate our MPU6050
         mpu.CalibrateAccel(6);
         mpu.CalibrateGyro(6);
-        mpu.PrintActiveOffsets();
-        // turn on the DMP, now that it's ready
-        Serial.println(F("Enabling DMP..."));
+
         mpu.setDMPEnabled(true);
 
         // enable Arduino interrupt detection
-        Serial.print(F("Enabling interrupt detection (Arduino external interrupt "));
-        Serial.print(digitalPinToInterrupt(INTERRUPT_PIN));
-        Serial.println(F(")..."));
+        digitalPinToInterrupt(INTERRUPT_PIN);
         attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpDataReady, RISING);
         mpuIntStatus = mpu.getIntStatus();
 
         // set our DMP Ready flag so the main loop() function knows it's okay to use it
-        Serial.println(F("DMP ready! Waiting for first interrupt..."));
         dmpReady = true;
 
         // get expected DMP packet size for later comparison
         packetSize = mpu.dmpGetFIFOPacketSize();
-    } else {
-        // ERROR!
-        // 1 = initial memory load failed
-        // 2 = DMP configuration updates failed
-        // (if it's going to break, usually the code will be 1)
-        Serial.print(F("DMP Initialization failed (code "));
-        Serial.print(devStatus);
-        Serial.println(F(")"));
     }
+
+   generateDefaultPackets();
+   threeWayHandshake();
  
 }
 
@@ -148,43 +300,60 @@ void setup() {
 // ================================================================
 
 void loop() {
-    // if programming failed, don't try to do anything
-    if (!dmpReady) return;
-    
-    // read a packet from FIFO
-    if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) { // Get the Latest packet 
-     
-        #ifdef OUTPUT_READABLE_YAWPITCHROLL
+  
+  delay(50); // frequency of 20Hz
+  if (Serial.available()) {
+    is_connected = false;
+    threeWayHandshake();
+  }
+  else
+  {
+      int data[8];
+      // if programming failed, don't try to do anything
+      if (!dmpReady) return;
+      
+      // read a packet from FIFO
+      if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) { // Get the Latest packet 
+
+            
+            middleFlex = analogRead(middleFinger);
+            float middleVflex = middleFlex * VCC / 1023.0;
+            float middleRflex = R_DIV * (VCC / middleVflex - 1.0);
+            int middleAngle = map(middleRflex, middleFlatResistance, middleBendResistance, 0, 90.0);
+            data[6] = middleAngle;
+            
+            lastFlex = analogRead(lastFinger);
+            float lastVflex = lastFlex * VCC / 1023.0;
+            float lastRflex = R_DIV * (VCC / lastVflex - 1.0);
+            int lastAngle = map(lastRflex, lastFlatResistance, lastBendResistance, 0, 90.0);
+            data[7] = lastAngle;
+        
             // display Euler angles in degrees
             mpu.dmpGetQuaternion(&q, fifoBuffer);
             mpu.dmpGetGravity(&gravity, &q);
             mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
-            Serial.print("ypr\t");
-            Serial.print(ypr[0] * 180/M_PI);
-            Serial.print("\t");
-            Serial.print(ypr[1] * 180/M_PI);
-            Serial.print("\t");
-            Serial.println(ypr[2] * 180/M_PI);
-        #endif   
-        #ifdef OUTPUT_READABLE_ACCEL
+            int yaw = ypr[0] * 180/M_PI;
+            data[0] = yaw;
+            
+            int pitch = ypr[1] * 180/M_PI;
+            data[1] = pitch;
+            
+            int roll = ypr[2] * 180/M_PI;
+            data[2] = roll;
+              
+            // display initial world-frame acceleration, adjusted to remove gravity - scaled values from ms^-2
+            // and rotated based on known orientation from quaternion
             mpu.dmpGetAccel(&aa, fifoBuffer);
-            ax = aa.x/8192.0*9.81;
-            ay = aa.y/8192.0*9.81;
-            az = aa.z/8192.0*9.81;
-            Serial.print("aworld\t");
-            Serial.print(ax);
-            Serial.print("\t");
-            Serial.print(ay);
-            Serial.print("\t");
-            Serial.println(az);
-  //            // display tab-separated accel x/y/z values
-  //            Serial.print("a/g:\t");
-  //            Serial.print(ax/16384.0*9.81); Serial.print("\t");
-  //            Serial.print(ay/16384.0*9.81); Serial.print("\t");
-  //            Serial.print(az/16384.0*9.81); Serial.print("\t");
-        #endif
-
-        delay(50);
-    }
-
+            mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
+            mpu.dmpGetLinearAccelInWorld(&aaWorld, &aaReal, &q);
+            ax = aaWorld.x;
+            ay = aaWorld.y;
+            az = aaWorld.z;
+            data[3] = ax;
+            data[4] = ay;
+            data[5] = az;
+          
+      }
+      sendDataPacket(data); 
+  }
 }
