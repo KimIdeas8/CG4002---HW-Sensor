@@ -6,11 +6,11 @@ G1:
     mpu.setYGyroOffset(41);
     mpu.setZGyroOffset(-88);
 
-G2: mpu.setXAccelOffset(-587); 
-    mpu.setYAccelOffset(-2467); 
-    mpu.setZAccelOffset(1039); 
-    mpu.setXGyroOffset(-56);
-    mpu.setYGyroOffset(80);
-    mpu.setZGyroOffset(36);
+G2: mpu.setXAccelOffset(-1149); 
+    mpu.setYAccelOffset(-27); 
+    mpu.setZAccelOffset(1251); 
+    mpu.setXGyroOffset(89);
+    mpu.setYGyroOffset(-10);
+    mpu.setZGyroOffset(35);
 
 	
