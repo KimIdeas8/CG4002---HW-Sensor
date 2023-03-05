@@ -261,13 +261,13 @@ void setup() {
     
     // use the code below to change accel/gyro offset values
     // supply your own gyro acc offsets here, scaled for min sensitivity
-    mpu.setXAccelOffset(-515); 
-    mpu.setYAccelOffset(-2771); 
-    mpu.setZAccelOffset(1009); 
-    mpu.setXGyroOffset(-55);
-    mpu.setYGyroOffset(78);
-    mpu.setZGyroOffset(36);
-
+    mpu.setXAccelOffset(1801); 
+    mpu.setYAccelOffset(629); 
+    mpu.setZAccelOffset(441); 
+    mpu.setXGyroOffset(33);
+    mpu.setYGyroOffset(41);
+    mpu.setZGyroOffset(-88);
+    
     // make sure it worked (returns 0 if so)
     if (devStatus == 0) {
         // Calibration Time: generate offsets and calibrate our MPU6050

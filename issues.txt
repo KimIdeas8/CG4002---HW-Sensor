@@ -1,0 +1,14 @@
+issues:
+1. serial.write in library
+2. fix batt for P1 Suit
+4. find resistance of glove
+3. need to fix batt wiring for 2 gloves
+
+TASKS:
+4. test connection to guns
+
+EXTRA:
+1. callibrate buck converter output = 5v
+3. Change int code for gun and suit:
+	gun: transmit isShooting=1
+	suit: receive hps -> transmit isShot
