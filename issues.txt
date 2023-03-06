@@ -10,5 +10,5 @@ TASKS:
 EXTRA:
 1. callibrate buck converter output = 5v
 3. Change int code for gun and suit:
-	gun: transmit isShooting=1
+	gun: receive ammo -> transmit isShooting=1
 	suit: receive hps -> transmit isShot
