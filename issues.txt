@@ -1,11 +1,5 @@
 issues:
 1. serial.write in library
-2. fix batt for P1 Suit
-4. find resistance of glove flexes
-3. need to fix batt wiring for 2 gloves
-
-TASKS:
-4. test connection to guns
 
 EXTRA:
 1. callibrate buck converter output = 5v
