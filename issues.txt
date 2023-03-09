@@ -1,5 +1,6 @@
 issues:
-1. serial.write in library
+1. serial.write in library [glove]
+2. glove disconnects randomly, even with one run (not battery issue)
 
 EXTRA:
 1. callibrate buck converter output = 5v

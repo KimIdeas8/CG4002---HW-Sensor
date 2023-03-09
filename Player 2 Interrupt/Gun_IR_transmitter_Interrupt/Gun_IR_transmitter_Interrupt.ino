@@ -6,6 +6,7 @@
 // ===               LIBRARIES + VARIABLES              ===
 // ================================================================
 #include <IRremote.hpp>
+
 const int buttonPin = 2;  
 const int irLED = 3; 
 byte segPins[] = {A3, A4, 4, 5, A5, A2, A1}; //7-seg LED segment display
@@ -13,17 +14,20 @@ byte segPins[] = {A3, A4, 4, 5, A5, A2, A1}; //7-seg LED segment display
 //CHANGEABLE VARIABLE:
 int ammo = 6; //6 bullets at start of game
 
-// Variables will change:
-int buttonStateNew;     // the current reading from the input pin
-int actualButtonState;             // the current reading from the input pin
-int lastButtonState = LOW;   // the previous reading from the input pin
-unsigned long lastDebounceTime = 0;  // the last time the output pin was toggled
-unsigned long debounceDelay = 50;    // the debounce time; increase if the output flickers
+#define switched                            true // value if the button switch has been pressed
+#define triggered                           true // controls   interrupt handler
+#define interrupt_trigger_type            RISING // interrupt   triggered on a RISING input
+#define debounce                              10000   // time to wait in milli secs
+volatile  bool interrupt_process_status = {
+  !triggered                                     // start with no switch press pending,   ie false (!triggered)
+};
+bool initialisation_complete =            true;   // inhibit any interrupts until initialisation is complete
 
 uint16_t sAddress = 0x0102;
 // ================================================================
 // ===               INTERNAL COMMS CODE              ===
 // ================================================================
+int data[8];
 enum PacketType
 {
   HELLO,
@@ -163,20 +167,77 @@ void threeWayHandshake()
 }
 
 // ================================================================
+// ===               BUTTON INTERRUPT FUNCTIONS              ===
+// ================================================================
+bool read_button() {
+  int button_reading;
+  // static variables because we need to retain old values between function calls
+  static bool switching_pending = false;
+  static long int elapse_timer;
+  if (interrupt_process_status == triggered) {
+    //  interrupt has been raised on this button so now need to complete
+    // the button  read process, ie wait until it has been released
+    // and debounce time elapsed
+    button_reading = digitalRead(buttonPin);
+    if (button_reading == HIGH)   {
+      // switch is pressed, so start/restart wait for button relealse, plus   end of debounce process
+      switching_pending = true;
+      elapse_timer   = micros(); // start elapse timing for debounce checking
+    }
+    if (switching_pending  && button_reading == LOW) {
+      // switch was pressed, now released, so check   if debounce time elapsed
+      if (micros() - elapse_timer >= debounce) {
+        // dounce time elapsed, so switch press cycle complete
+        switching_pending   = false;             // reset for next button press interrupt cycle
+        return switched;                       // advise that switch has been pressed
+      }
+    }
+  }
+  return !switched; // either no press request or debounce period not elapsed
+}
+
+volatile int num_Shots  = 0;
+void   button_interrupt_handler()
+{
+  if (initialisation_complete == true)
+  { //  all variables are initialised so we are okay to continue to process this interrupt
+    if (interrupt_process_status == !triggered) {
+      if (digitalRead(buttonPin) == HIGH) {
+        // button   pressed, so we can start the read on/off + debounce cycle wich will be completed by the button_read() function.
+        interrupt_process_status   = triggered;  // keep this ISR 'quiet' until button read fully completed
+        noInterrupts();
+        while (read_button() != true){}; //EXIT LOOP - ie. button is pressed & released
+        num_Shots++;
+        Serial.println("shot");
+        //reenable interrupt:
+        interrupt_process_status   = !triggered;
+        interrupts();
+      }
+    }
+  }
+}
+
+// ================================================================
 // ===               SETUP CODE              ===
 // ================================================================
 void setup() {
   
   Serial.begin(115200);
+  
+  //enable button:
   pinMode(buttonPin, INPUT);
-  pinMode(irLED, OUTPUT);
-  pinMode(13,OUTPUT);
+  attachInterrupt(digitalPinToInterrupt(buttonPin), button_interrupt_handler, interrupt_trigger_type);
+                  
   //enable IR LED:
+  pinMode(irLED, OUTPUT);
   IrSender.begin(irLED, ENABLE_LED_FEEDBACK, USE_DEFAULT_FEEDBACK_LED_PIN); //enable IR LED
+  
   //enable LED 7 seg display:
+  pinMode(13,OUTPUT);
   for(int i =0; i< 7; i++) {
     pinMode(segPins[i], OUTPUT);
   }
+  
   //initialise led seg display to display 6 bullets:
   sevsegSetNumber(6);
 
@@ -276,81 +337,66 @@ void sevsegSetNumber(int num){
   }
 }
 
+void toggle_Ammo_display(){
+    if(ammo > 0) {
+      ammo-=1; //minus one for ammo and display this number on led segment display + send this info to visualiser
+    }
+    //ammo = 0; if user reload, reset ammo to 6
+    else {
+      ammo = 6;
+    } 
+    sevsegSetNumber(ammo);
+}
+
+//This function sends data pkt to relay node till ack:
+void send_data_pkt(){
+    
+    data[0] = 1; //set data pkt 1st bit to '1' - ie. player is shooting
+    bool is_ack = false;
+    while (!is_ack) // packet will keep sending until it is acknowledged by laptop
+    {
+      sendDataPacket(data);
+      waitForData();
+      if (!crcCheck()) continue;
+      if (packetCheck(0, ACK))
+      {
+        is_ack = true;
+      }
+      else if (packetCheck(0, HELLO))
+      {
+        sendDefaultPacket(HELLO);
+      
+        // wait for ack from laptop
+        waitForData();
+  
+        if (crcCheck() && packetCheck(0, ACK))
+        {
+          is_ack = true;
+        }
+      }
+    }
+}
+
 // ================================================================
 // ===               MAIN LOOP              ===
 // ================================================================
 void loop() {
-  
-  delay(50);
   // ===               DATA PACKET              ===
-  int data[8];
   for (int i = 0; i < 8; i++)
   {
     data[i] = 0; 
   }
   
   // ===               MAIN CODE              ===
-  // read the state of the switch into a local variable:
-  buttonStateNew = digitalRead(buttonPin);
+      
+  //while there are pending shots to be processed, send IR LED to opponent, toggle Ammo display & send data pkt to relay node
+  if (num_Shots > 0) {
+    num_Shots--;
+    IrSender.sendNEC(sAddress, 0x01, 0); //Send IR LED -> Command sent: 0x01
+    toggle_Ammo_display(); //Change ammo count displayed on 7-seg LED
 
-  // If the switch changed, due to noise or pressing/release:
-  if (buttonStateNew != lastButtonState) {
-    // reset the debouncing timer
-    lastDebounceTime = millis();
-  }
-  // whatever the reading is at, it's been there for longer than the debounce
-  // delay, so take it as the actual current state:
-  if ((millis() - lastDebounceTime) > debounceDelay) {
-
-    // if the button state has changed:
-    if (buttonStateNew != actualButtonState) {
-      actualButtonState = buttonStateNew;
-
-      // only send IR LED if the new button state is HIGH
-      if (actualButtonState == HIGH) {
-                
-        IrSender.sendNEC(sAddress, 0x01, 0); //Command sent: 0x01
-        //modify data pkt sent to SW Visualiser:
-        data[0] = 1;
-        //change ammo on led:
-        if(ammo > 0) {
-          ammo-=1; //minus one for ammo and display this number on led segment display + send this info to visualiser
-        }
-        //ammo = 0; if user reload, reset ammo to 6
-        else {
-          ammo = 6;
-        } 
-        sevsegSetNumber(ammo);
-      }
-    }
-    //either: time limit has not passed 50ms and gun shot 
-    //or: no shooting action
-  }
-  // save the reading. Next time through the loop, it'll be the lastButtonState:
-  lastButtonState = buttonStateNew;
-  // ===               DATA PACKET              ===
-  bool is_ack = false;
-  while (!is_ack) // packet will keep sending until it is acknowledged by laptop
-  {
-    sendDataPacket(data);
-    waitForData();
-    if (!crcCheck()) continue;
-    if (packetCheck(0, ACK))
-    {
-      is_ack = true;
-    }
-    else if (packetCheck(0, HELLO))
-    {
-      sendDefaultPacket(HELLO);
-    
-      // wait for ack from laptop
-      waitForData();
-
-      if (crcCheck() && packetCheck(0, ACK))
-      {
-        is_ack = true;
-      }
-    }
+    // ===               DATA PACKET              ===
+    send_data_pkt(); //Send pkt to relay node
   }
 
   // ===               END              ===

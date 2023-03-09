@@ -1,4 +1,4 @@
- // ================================================================
+// ================================================================
 // ===               INTERNAL COMMS CODE              ===
 // ================================================================
 #pragma pack(1)
@@ -6,7 +6,6 @@
 // ===               LIBRARIES + VARIABLES              ===
 // ================================================================
 #include <IRremote.hpp>
-
 const int buttonPin = 2;  
 const int irLED = 3; 
 byte segPins[] = {A3, A4, 4, 5, A5, A2, A1}; //7-seg LED segment display
@@ -281,6 +280,8 @@ void sevsegSetNumber(int num){
 // ===               MAIN LOOP              ===
 // ================================================================
 void loop() {
+  
+  delay(50);
   // ===               DATA PACKET              ===
   int data[8];
   for (int i = 0; i < 8; i++)
@@ -311,8 +312,6 @@ void loop() {
         IrSender.sendNEC(sAddress, 0x02, 0); //Command sent: 0x02
         //modify data pkt sent to SW Visualiser:
         data[0] = 1;
-
-        digitalWrite(13,HIGH); //test IR LED on beetle
         //change ammo on led:
         if(ammo > 0) {
           ammo-=1; //minus one for ammo and display this number on led segment display + send this info to visualiser
@@ -323,16 +322,12 @@ void loop() {
         } 
         sevsegSetNumber(ammo);
       }
-      else {
-        digitalWrite(13, LOW);
-      }
     }
     //either: time limit has not passed 50ms and gun shot 
     //or: no shooting action
   }
   // save the reading. Next time through the loop, it'll be the lastButtonState:
   lastButtonState = buttonStateNew;
-  
   // ===               DATA PACKET              ===
   bool is_ack = false;
   while (!is_ack) // packet will keep sending until it is acknowledged by laptop
@@ -357,6 +352,6 @@ void loop() {
       }
     }
   }
-  
+
   // ===               END              ===
 }

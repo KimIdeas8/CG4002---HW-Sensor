@@ -60,15 +60,21 @@ const float VCC = 5;      // voltage at Ardunio 5V line
 const float R_DIV = 10000.0;  // resistor used to create a voltage divider
 
 
-const float middleFlatResistance = 15384.61;// resistance when flat
-const float middleBendResistance = 69921.88;  // resistance at 90 deg
-//open = 38483.41
-//closed - 55159.93
+const float middleFlatResistance = 10920.05;// resistance when flat
+const float middleBendResistance = 21968.75;  // resistance at 90 deg
+//P2: 
+//flat - 10920.05
+//90 - 21968.75
+//open - 10217.39
+//closed- 26021.13
 
-const float lastFlatResistance = 39902.44;// resistance when flat
-const float lastBendResistance = 87428.57;  // resistance at 90 deg
-//open - 14890.51
-//closed - 26666.67
+const float lastFlatResistance = 33164.56;// resistance when flat
+const float lastBendResistance = 59591.84;  // resistance at 90 deg
+//p2:
+//opem - 30756.97
+//closed - 56000.00
+//flat - 33164.56
+// 90 - 59591.84
 
 enum PacketType
 {
@@ -255,13 +261,13 @@ void setup() {
     
     // use the code below to change accel/gyro offset values
     // supply your own gyro acc offsets here, scaled for min sensitivity
-    mpu.setXAccelOffset(-587); 
-    mpu.setYAccelOffset(-2467); 
-    mpu.setZAccelOffset(1039); 
-    mpu.setXGyroOffset(-56);
-    mpu.setYGyroOffset(80);
-    mpu.setZGyroOffset(36);
-
+    mpu.setXAccelOffset(-1149); 
+    mpu.setYAccelOffset(-27); 
+    mpu.setZAccelOffset(1251); 
+    mpu.setXGyroOffset(89);
+    mpu.setYGyroOffset(-10);
+    mpu.setZGyroOffset(35);
+    
     // make sure it worked (returns 0 if so)
     if (devStatus == 0) {
         // Calibration Time: generate offsets and calibrate our MPU6050

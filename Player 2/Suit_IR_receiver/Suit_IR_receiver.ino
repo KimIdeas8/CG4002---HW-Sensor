@@ -397,6 +397,8 @@ void displayPoints(int points){
 // ===               MAIN LOOP              ===
 // ================================================================
 void loop() {
+  
+  delay(50);
   // ===               DATA PACKET              ===
   int data[8];
   for (int i = 0; i < 8; i++)
@@ -422,9 +424,15 @@ void loop() {
         points -= 10;     
       }
     }
+    else {
+      data[0] = 0;
+    }
     displayPoints(points);
     delay(25);
     IrReceiver.resume();
+  }
+  else {
+    data[0] = 0;
   }
 
   // ===               DATA PACKET              ===
