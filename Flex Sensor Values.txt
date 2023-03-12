@@ -1,6 +1,4 @@
 P1:
-
-P2:
 const float middleFlatResistance = 10920.05;// resistance when flat
 const float middleBendResistance = 21968.75;  // resistance at 90 deg
 //P2: 
@@ -16,3 +14,5 @@ const float lastBendResistance = 59591.84;  // resistance at 90 deg
 //closed - 56000.00
 //flat - 33164.56
 // 90 - 59591.84
+
+P2:

@@ -1,16 +1,12 @@
-G1:
-    mpu.setXAccelOffset(1801); 
-    mpu.setYAccelOffset(629); 
-    mpu.setZAccelOffset(441); 
-    mpu.setXGyroOffset(33);
-    mpu.setYGyroOffset(41);
-    mpu.setZGyroOffset(-88);
+P1 - AccX,Y,Z, GyroX,Y,Z (need to negate):
++0.05, 0.00, +1.07, -0.89, +0.79, +1.84\
 
-G2: mpu.setXAccelOffset(-1149); 
-    mpu.setYAccelOffset(-27); 
-    mpu.setZAccelOffset(1251); 
-    mpu.setXGyroOffset(89);
-    mpu.setYGyroOffset(-10);
-    mpu.setZGyroOffset(35);
+ie. 
+  AccX = (AccX - 0.05) * 9.81; //Convert to ms^-2
+  AccY = AccY * 9.81;
+  AccZ = (AccZ - 1.07)* 9.81;
 
-	
+  GyroX = GyroX + 0.89;
+  GyroY = GyroY - 0.79;
+  GyroZ = GyroZ - 1.84;
+ 

@@ -1,0 +1,21 @@
+AccY: tilt up (0 to 9), tilt down(0 to -9)
+AccX: tilt left (0 to 9), tilt right (0 to -9)
+AccZ: face up(9), face down(-9)
+
+
+Grenade:
+- hands up: increment in AccY, GyroX +ve
+- hands down: decrement in AccY, GyroX -ve
+
+Shield:
+- Hands up: increment in AccY towards +ve, decrement in AccX , -ve GyroZ
+- Hands down: decrement in AccY, increment in AccX, +ve GyroZ
+
+
+Reload:
+- hands up: Decrement in AccX, and Z, increment in AccY towards +ve, GyroY -ve
+- hands down: Increment in AccX & AccZ, Decrement in AccY, GyroY +ve
+
+
+
+Logout
