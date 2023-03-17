@@ -13,9 +13,6 @@
 
 byte segPins[] = {A3, A4, 4, 5, A5, A2, A1}; //7-seg LED segment display
 
-//CHANGEABLE VARIABLE:
-int ammo = 6; //6 bullets at start of game
-
 #define switched                            true // value if the button switch has been pressed
 #define triggered                           true // controls   interrupt handler
 #define interrupt_trigger_type            RISING // interrupt   triggered on a RISING input
@@ -26,10 +23,15 @@ volatile  bool interrupt_process_status = {
 bool initialisation_complete =            true;   // inhibit any interrupts until initialisation is complete
 
 uint16_t sAddress = 0x0102;
+
+//GLOBAL VARIABLE:
+int ammo = 6; //6 bullets at start of game
 // ================================================================
 // ===               INTERNAL COMMS CODE              ===
 // ================================================================
-int data[8];
+
+/*---------------- Data structures ----------------*/
+
 enum PacketType
 {
   HELLO,
@@ -40,8 +42,8 @@ enum PacketType
 
 typedef struct
 {
-  uint8_t header;           // contains beetle id and packet type
-  uint8_t padding;          // Padding header to 2 bytes
+  uint8_t header;           // 1 byte header: 4 bit node id | 2 bit packet type | 2 bit sequence no
+  uint8_t padding;          // padding header to 2 bytes
   int euler_x;              // contains IR data for data packet for IR sensors
   int euler_y;              // all other fields padded with 0 for data packet for IR sensors
   int euler_z;
@@ -53,12 +55,22 @@ typedef struct
   uint16_t crc;             // Cyclic redundancy check (CRC-16)
 } BLEPacket;
 
+/*---------------- Global variables ----------------*/
+
 const unsigned int PACKET_SIZE = 20;
+const unsigned int PKT_THRESHOLD = 5;
+const int default_data[] = {0, 0, 0, 0, 0, 0, 0, 0};
+const int shoot_data[] = {1, 0, 0, 0, 0, 0, 0, 0};
+
+static unsigned int bullets = 6;
+static unsigned int numShots = 0;
+static unsigned int seqNo = 1;
+static unsigned int counter = 0;
 
 uint8_t serial_buffer[PACKET_SIZE];
 BLEPacket* curr_packet;
 
-BLEPacket default_packets[3];
+/*---------------- CRC calculation ----------------*/
 
 uint16_t crcCalc(uint8_t* data)
 {
@@ -74,6 +86,8 @@ uint16_t crcCalc(uint8_t* data)
    return (sum2 << 8) | sum1;
 }
 
+/*---------------- Checks ----------------*/
+
 bool crcCheck()
 {
   uint16_t crc = curr_packet->crc;
@@ -85,29 +99,24 @@ bool packetCheck(uint8_t node_id, PacketType packet_type)
 {
   uint8_t header = curr_packet->header;
   uint8_t curr_node_id = (header & 0xf0) >> 4;
-  PacketType curr_packet_type = PacketType(header & 0xf);
+  PacketType curr_packet_type = PacketType((header & 0b1100) >> 2);
   return curr_node_id == node_id && curr_packet_type == packet_type;
 }
 
-void waitForData()
+bool seqNoCheck()
 {
-  unsigned int buf_pos = 0;
-  while (buf_pos < PACKET_SIZE)
-  {
-    if (Serial.available())
-    {
-      uint8_t in_data = Serial.read();
-      serial_buffer[buf_pos] = in_data;
-      buf_pos++;
-    }
-  }
-  curr_packet = (BLEPacket*)serial_buffer;
+  uint8_t header = curr_packet->header;
+  uint8_t curr_seq_no = header & 0b1;
+  return curr_seq_no != seqNo;
 }
+
+/*---------------- Packet management ----------------*/
+
 
 BLEPacket generatePacket(PacketType packet_type, int* data)
 {
   BLEPacket p;
-  p.header = (1 << 4) | packet_type;
+  p.header = (1 << 4) | (packet_type << 2) | seqNo;
   p.padding = 0;
   p.euler_x = data[0];
   p.euler_y = data[1];
@@ -123,24 +132,45 @@ BLEPacket generatePacket(PacketType packet_type, int* data)
   return p;
 }
 
-void generateDefaultPackets()
+void sendPacket(PacketType packet_type, int* data)
 {
-  int data[] = {0, 0, 0, 0, 0, 0, 0, 0};
-  for (int i = 0; i < 3; i++)
-  {
-    default_packets[i] = generatePacket(PacketType(i), data);
-  }
+  BLEPacket p = generatePacket(packet_type, data);
+  Serial.write((byte*)&p, PACKET_SIZE);
 }
 
 void sendDefaultPacket(PacketType packet_type)
 {
-  Serial.write((byte*)&default_packets[packet_type], PACKET_SIZE);
+  sendPacket(packet_type, default_data);
 }
 
-void sendDataPacket(int* data)
+void sendDataPacket()
 {
-  BLEPacket p = generatePacket(DATA, data);
-  Serial.write((byte*)&p, PACKET_SIZE);
+  int data[] = {counter, 0, 0, 0, 0, 0, 0, 0};
+  sendPacket(DATA, data);
+}
+
+/*---------------- Game state handler ----------------*/
+
+void updateGameState()
+{
+  bullets = curr_packet->euler_x;
+}
+
+/*---------------- Communication protocol ----------------*/
+
+void waitForData()
+{
+  unsigned int buf_pos = 0;
+  while (buf_pos < PACKET_SIZE)
+  {
+    if (Serial.available())
+    {
+      uint8_t in_data = Serial.read(); //keeps reading incoming data from laptop till pkt is completely constructed
+      serial_buffer[buf_pos] = in_data;
+      buf_pos++;
+    }
+  }
+  curr_packet = (BLEPacket*)serial_buffer; //store current incoming data pkt
 }
 
 void threeWayHandshake()
@@ -157,12 +187,18 @@ void threeWayHandshake()
       continue;
     } 
     sendDefaultPacket(HELLO);
+
+    // reset seq no
+    seqNo = 1;
+
+    numShots = 0;
     
     // wait for ack from laptop
     waitForData();
     
     if (crcCheck() && packetCheck(0, ACK))
     {
+      updateGameState();
       is_connected = true;
     }
   }
@@ -210,6 +246,7 @@ void   button_interrupt_handler()
         noInterrupts();
         while (read_button() != true){}; //EXIT LOOP - ie. button is pressed & released
         num_Shots++;
+        numShots++;
         //reenable interrupt:
         interrupt_process_status   = !triggered;
         interrupts();
@@ -241,8 +278,7 @@ void setup() {
   //initialise led seg display to display 6 bullets:
   sevsegSetNumber(6);
 
-  //handshake:
-  generateDefaultPackets();
+  // int comms set up
   threeWayHandshake();
 }
 
@@ -338,66 +374,120 @@ void sevsegSetNumber(int num){
 }
 
 void toggle_Ammo_display(){
+  /*
     if(ammo > 0) {
-      ammo-=1; //minus one for ammo and display this number on led segment display + send this info to visualiser
+      ammo -= 1; //minus one for ammo and display this number on led segment display + send this info to visualiser
     }
     //ammo = 0; if user reload, reset ammo to 6
     else {
       ammo = 6;
     } 
-    sevsegSetNumber(ammo);
-}
-
-//This function sends data pkt to relay node till ack:
-void send_data_pkt(){
-    
-    data[0] = 1; //set data pkt 1st bit to '1' - ie. player is shooting
-    bool is_ack = false;
-    while (!is_ack) // packet will keep sending until it is acknowledged by laptop
-    {
-      sendDataPacket(data);
-      waitForData();
-      if (!crcCheck()) continue;
-      if (packetCheck(0, ACK))
-      {
-        is_ack = true;
-      }
-      else if (packetCheck(0, HELLO))
-      {
-        sendDefaultPacket(HELLO);
-      
-        // wait for ack from laptop
-        waitForData();
-  
-        if (crcCheck() && packetCheck(0, ACK))
-        {
-          is_ack = true;
-        }
-      }
-    }
+    */
+    sevsegSetNumber(bullets);
 }
 
 // ================================================================
 // ===               MAIN LOOP              ===
 // ================================================================
 void loop() {
-  // ===               DATA PACKET              ===
-  for (int i = 0; i < 8; i++)
-  {
-    data[i] = 0; 
-  }
+  
+  //delay(100);
   
   // ===               MAIN CODE              ===
-      
-  //while there are pending shots to be processed, send IR LED to opponent, toggle Ammo display & send data pkt to relay node
-  if (num_Shots > 0) {
-    num_Shots--;
-    sendNECMinimal(IR_SEND_PIN, 0, 2 ,0); //Send IR LED -> Command sent: 0x02
-    //IrSender.sendNEC(sAddress, 0x02, 0); //Send IR LED -> Command sent: 0x02
-    toggle_Ammo_display(); //Change ammo count displayed on 7-seg LED
 
-    // ===               DATA PACKET              ===
-    send_data_pkt(); //Send pkt to relay node
+  
+  // ===               INTERNAL COMMS CODE              ===
+  //While there are still shots, send pkts to laptop continously till no more leftover shots
+  if (numShots > 0)
+  {
+     //while there are pending shots to be processed, send IR LED to opponent, toggle Ammo display & send data pkt to relay node
+    if (num_Shots > 0) {
+      num_Shots -= 1;
+      sendNECMinimal(IR_SEND_PIN, 0, 2 ,0); //Send IR LED -> Command sent: 0x02 //P1 sents '2' to P2
+      //IrSender.sendNEC(sAddress, 0x02, 0); //Send IR LED -> Command sent: 0x02
+      //toggle_Ammo_display(); //Change ammo count displayed on 7-seg LED
+    }
+    
+    // increment sequence number for next packet - ie. seqNo 0 and 1 only
+    seqNo++;
+    seqNo %= 2;
+
+    // initialize loop variables
+    unsigned int pkt_count = 0;
+    bool is_ack = false;
+
+    while (!is_ack)
+    {
+      // send next data pkt
+      // or only resend current data packet if the number of failed CRC checks has exceeded threshold = 5 OR no ACK  OR HELLO pkt received from laptop 
+      if (pkt_count == 0) sendDataPacket();
+
+      // receive and buffer serial data
+      waitForData();
+
+      // increment packet count
+      pkt_count++;
+      pkt_count %= PKT_THRESHOLD;
+      
+      // do checks on received data
+      if (!crcCheck()) continue;
+      if (packetCheck(0, ACK) && seqNoCheck())
+      {
+        numShots--; //tracks remaining no of packets to be sent from beetle to SW
+        counter++; //tracks no of shots 
+        updateGameState(); //receiving ACK with bullet count from SW -> need to sync with beetle
+        toggle_Ammo_display();
+        is_ack = true;
+      }
+      else if (packetCheck(0, HELLO)) // reinitiate 3-way handshake - after disconnection
+      {
+        sendDefaultPacket(HELLO);
+
+        // reset seq no
+        seqNo = 1;
+
+        numShots = 0;
+        
+        // wait for ack from laptop
+        waitForData();
+        
+        if (crcCheck() && packetCheck(0, ACK))
+        {
+          updateGameState();
+          toggle_Ammo_display();
+          is_ack = true;
+        }
+      }
+    }
+  }
+  //Once no more shooting data to be sent to laptop, beetle has to receive ACK from laptop or re-initiate handshake
+  else
+  {
+    waitForData();
+    if (!crcCheck()) return;
+    if (packetCheck(0, HELLO)) // reinitiate 3-way handshake
+    {
+      sendDefaultPacket(HELLO);
+
+      // reset seq no
+      seqNo = 1;
+
+      numShots = 0;
+      
+      // wait for ack from laptop
+      waitForData();
+      
+      if (crcCheck() && packetCheck(0, ACK))
+      {
+        updateGameState(); //re-read bullets from laptop(SW) -> ARDUINO SYNC WITH GAMESTATE FROM SW
+        toggle_Ammo_display();
+      }
+    }
+    else if (packetCheck(0, ACK) && seqNoCheck()) // game state broadcast (when laptop SENDS ACK)
+    {
+      updateGameState();
+      toggle_Ammo_display();
+    }
   }
 
   // ===               END              ===

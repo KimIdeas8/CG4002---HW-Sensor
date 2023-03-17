@@ -1,0 +1,10 @@
+gun:
+- change to 3.7V rechargeable -> step up 1-5V
+
+
+suit: 
+- lilypad -> 1.5V batt
+
+
+glove: 
+- use current flat battery

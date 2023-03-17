@@ -243,8 +243,8 @@ void setup() {
   sevsegSetNumber(6);
 
   //handshake:
-  generateDefaultPackets();
-  threeWayHandshake();
+  //generateDefaultPackets();
+  //threeWayHandshake();
 }
 
 
@@ -401,7 +401,7 @@ void loop() {
     toggle_Ammo_display(); //Change ammo count displayed on 7-seg LED
     
     // ===               DATA PACKET              ===
-    send_data_pkt(); //Send pkt to relay node
+    //send_data_pkt(); //Send pkt to relay node
   }
 
   // ===               END              ===

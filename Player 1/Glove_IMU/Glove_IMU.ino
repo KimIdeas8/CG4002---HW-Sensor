@@ -275,6 +275,28 @@ void calc_IMU_error(){
   
 } 
 
+// Function to swap two integers
+void swap(float *x, float *y) {
+    int temp = *x;
+    *x = *y;
+    *y = temp;
+}
+
+// Function to calculate the median of an array
+double median(float arr[]) {
+    // Sort the array using bubble sort
+    for (int i = 0; i < 5; i++) {
+        for (int j = 0; j < 5 - i; j++) {
+            if (arr[j] > arr[j + 1]) {
+                swap(&arr[j], &arr[j + 1]);
+            }
+        }
+    }
+
+    // Calculate the median
+    return (double)arr[2];
+}
+
 float AccXSum = 0;
 float AccYSum = 0;
 float AccZSum = 0;
@@ -283,11 +305,20 @@ float GyroYSum = 0;
 float GyroZSum = 0;
 float middleAngleSum = 0;
 float lastAngleSum = 0;
-int count = 0;
+
+//float AccXArr[5];
+//float AccYArr[5];
+//float AccZArr[5];
+//float GyroXArr[5];
+//float GyroYArr[5];
+//float GyroZArr[5];
+//float middleAngleArr[5];
+//float lastAngleArr[5];
+
+int count =0;
 
 void loop() {
-  
-  delay(4); // frequency of 100Hz - take average of 5 samples
+  delay(7); // frequency of 100Hz - take average of 5 samples
   if (Serial.available()) {
     is_connected = false;
     threeWayHandshake();
@@ -295,93 +326,118 @@ void loop() {
   else
   {
 
-      int data[8];
+    int data[8];
 
-      for (int i = 0; i < 8; i++)
-      {
-        data[i] = 0; 
-      }
-        //Read accelerometer data:
-        Wire.beginTransmission(MPU);
-        Wire.write(0x3B); //Start with ACCEL_XOUT_H
-        Wire.endTransmission(false);
-        Wire.requestFrom(MPU, 6, true); //Read 6 registers in total, each axis value is stored in 2 registers
-        //For a range of +-2g, we need to divide the raw values by 16384, according to the datasheet
-        AccX = (Wire.read() << 8 | Wire.read()) / 16384.0; //X-axis value //unit: g
-        AccY = (Wire.read() << 8 | Wire.read()) / 16384.0; //Y-axis value
-        AccZ = (Wire.read() << 8 | Wire.read()) / 16384.0; //Z-axis value
-        //Correct the outputs with the calc error values:
-        AccX = (AccX - 0.05) * 9.81; //Convert to ms^-2
-        AccY = AccY * 9.81;
-        AccZ = (AccZ - 1.07)* 9.81;
-        AccXSum += AccX;
-        AccYSum += AccY;
-        AccZSum += AccZ;
-        
-        //Read Gyroscope Data:
-        previousTime = currentTime; //Previous Time is stored before actual time is read
-        currentTime = millis(); //Current Time actual time read
-        elapsedTime = (currentTime - previousTime)/1000; //Divide by 1000 to get seconds
+    for (int i = 0; i < 8; i++)
+    {
+      data[i] = 0; 
+    }
+    //Read accelerometer data:
+    Wire.beginTransmission(MPU);
+    Wire.write(0x3B); //Start with ACCEL_XOUT_H
+    Wire.endTransmission(false);
+    Wire.requestFrom(MPU, 6, true); //Read 6 registers in total, each axis value is stored in 2 registers
+    //For a range of +-2g, we need to divide the raw values by 16384, according to the datasheet
+    AccX = (Wire.read() << 8 | Wire.read()) / 16384.0; //X-axis value //unit: g
+    AccY = (Wire.read() << 8 | Wire.read()) / 16384.0; //Y-axis value
+    AccZ = (Wire.read() << 8 | Wire.read()) / 16384.0; //Z-axis value
+    //Correct the outputs with the calc error values:
+    AccX = (AccX - 0.05) * 9.81; //Convert to ms^-2
+    AccY = AccY * 9.81;
+    AccZ = (AccZ - 0.07)* 9.81;
+    AccXSum += AccX;
+    AccYSum += AccY;
+    AccZSum += AccZ;
+    
+    //Read Gyroscope Data:
+    previousTime = currentTime; //Previous Time is stored before actual time is read
+    currentTime = millis(); //Current Time actual time read
+    elapsedTime = (currentTime - previousTime)/1000; //Divide by 1000 to get seconds
+  
+    Wire.beginTransmission(MPU);
+    Wire.write(0x43); //Gyro Data First Register address 0x43
+    Wire.endTransmission(false);
+    Wire.requestFrom(MPU, 6, true); //read 4 registers total, each axis value is stored in 2 registers
+    //For a 250 deg/s range, divide the raw value by 131.0, according to datasheet
+    GyroX = (Wire.read() << 8 | Wire.read()) / 131.0; //unit: deg/s
+    GyroY = (Wire.read() << 8 | Wire.read()) / 131.0;
+    GyroZ = (Wire.read() << 8 | Wire.read()) / 131.0;
+    //Correct the outputs with the calc error values:
+    GyroX = GyroX + 0.89;
+    GyroY = GyroY - 0.79;
+    GyroZ = GyroZ - 1.84;
+    GyroXSum += GyroX;
+    GyroYSum += GyroY;
+    GyroZSum += GyroZ;
+    
+    middleFlex = analogRead(middleFinger);
+    float middleVflex = middleFlex * VCC / 1023.0;
+    float middleRflex = R_DIV * (VCC / middleVflex - 1.0);
+    int middleAngle = map(middleRflex, middleFlatResistance, middleBendResistance, 0, 90.0);
+    middleAngleSum += middleAngle;
+    
+    lastFlex = analogRead(lastFinger);
+    float lastVflex = lastFlex * VCC / 1023.0;
+    float lastRflex = R_DIV * (VCC / lastVflex - 1.0);
+    int lastAngle = map(lastRflex, lastFlatResistance, lastBendResistance, 0, 90.0);
+    lastAngleSum += lastAngle;
+
+//    AccXArr[count] = AccX;
+//    AccYArr[count] = AccY;
+//    AccZArr[count] = AccZ;
+//    GyroXArr[count] = GyroX;
+//    GyroYArr[count] = GyroY;
+//    GyroZArr[count] = GyroZ;
+//    middleAngleArr[count] = middleAngle;
+//    lastAngleArr[count] = lastAngle;
+//    
+//    data[0] = GyroX;
+//    data[1] = GyroY;
+//    data[2] = GyroZ;
+//    data[3] = AccX;
+//    data[4] = AccY;
+//    data[5] = AccZ;
+//    data[6] = middleAngle;
+//    data[7] = lastAngle;
+    count++;
+    count%=5;
+    if(count == 4) {
+
+
+      AccXSum /= 5;
+      AccYSum /= 5;
+      AccZSum /= 5;
+      GyroXSum /= 5;
+      GyroYSum /= 5;
+      GyroZSum /= 5;
+  
+      data[0] = GyroXSum;
+      data[1] = GyroYSum;
+      data[2] = GyroZSum;
+      data[3] = AccXSum*100;
+      data[4] = AccYSum*100;
+      data[5] = AccZSum*100;
+      data[6] = middleAngleSum/5;
+      data[7] = lastAngleSum/5;
+
+      AccXSum = 0;
+      AccYSum = 0;
+      AccZSum = 0;
+      GyroXSum = 0;
+      GyroYSum = 0;
+      GyroZSum = 0;
+      middleAngleSum = 0;
+      lastAngleSum = 0;
+
       
-        Wire.beginTransmission(MPU);
-        Wire.write(0x43); //Gyro Data First Register address 0x43
-        Wire.endTransmission(false);
-        Wire.requestFrom(MPU, 6, true); //read 4 registers total, each axis value is stored in 2 registers
-        //For a 250 deg/s range, divide the raw value by 131.0, according to datasheet
-        GyroX = (Wire.read() << 8 | Wire.read()) / 131.0; //unit: deg/s
-        GyroY = (Wire.read() << 8 | Wire.read()) / 131.0;
-        GyroZ = (Wire.read() << 8 | Wire.read()) / 131.0;
-        //Correct the outputs with the calc error values:
-        GyroX = GyroX + 0.89;
-        GyroY = GyroY - 0.79;
-        GyroZ = GyroZ - 1.84;
-        GyroXSum += GyroX;
-        GyroYSum += GyroY;
-        GyroZSum += GyroZ;
-        
-        middleFlex = analogRead(middleFinger);
-        float middleVflex = middleFlex * VCC / 1023.0;
-        float middleRflex = R_DIV * (VCC / middleVflex - 1.0);
-        int middleAngle = map(middleRflex, middleFlatResistance, middleBendResistance, 0, 90.0);
-        middleAngleSum += middleAngle;
-        
-        lastFlex = analogRead(lastFinger);
-        float lastVflex = lastFlex * VCC / 1023.0;
-        float lastRflex = R_DIV * (VCC / lastVflex - 1.0);
-        int lastAngle = map(lastRflex, lastFlatResistance, lastBendResistance, 0, 90.0);
-        lastAngleSum += lastAngle;
-        
-        count++;
-        count%=5;
-        if(count == 0) {
-            AccX = AccXSum/5;
-            AccY  = AccYSum/5;
-            AccZ = AccZSum/5;
-            GyroX = GyroXSum/5;
-            GyroY = GyroYSum/5;
-            GyroZ = GyroZSum/5;
-            
-            data[0] = GyroX;
-            data[1] = GyroY;
-            data[2] = GyroZ;
-            data[3] = AccX*100;
-            data[4] = AccY*100;
-            data[5] = AccZ*100;
-            data[6] = middleAngleSum/5;
-            data[7] = lastAngleSum/5;
-            
-            AccXSum = 0;
-            AccYSum = 0;
-            AccZSum = 0;
-            GyroXSum = 0;
-            GyroYSum = 0;
-            GyroZSum = 0;
-            middleAngleSum = 0;
-            lastAngleSum = 0;
-            
-            sendDataPacket(data); 
-        }
+//      data[0] = median(GyroXArr);
+//      data[1] = median(GyroYArr);
+//      data[2] = median(GyroZArr);
+//      data[3] = median(AccXArr);
+//      data[4] = median(AccYArr);
+//      data[5] = median(AccZArr);
 
+      sendDataPacket(data); 
+    }
   }
-
 }

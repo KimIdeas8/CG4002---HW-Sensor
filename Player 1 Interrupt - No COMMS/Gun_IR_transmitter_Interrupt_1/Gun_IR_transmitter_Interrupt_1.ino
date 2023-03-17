@@ -210,6 +210,7 @@ void   button_interrupt_handler()
         noInterrupts();
         while (read_button() != true){}; //EXIT LOOP - ie. button is pressed & released
         num_Shots++;
+        Serial.println("shot");
         //reenable interrupt:
         interrupt_process_status   = !triggered;
         interrupts();

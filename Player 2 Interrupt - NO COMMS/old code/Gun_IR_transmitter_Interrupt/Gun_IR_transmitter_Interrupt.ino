@@ -5,12 +5,10 @@
 // ================================================================
 // ===               LIBRARIES + VARIABLES              ===
 // ================================================================
-#include <Arduino.h>
-#include <TinyIRSender.hpp>
+#include <IRremote.hpp>
 
-#define PUSHBUTTON_PIN  2
-#define IR_SEND_PIN         3
-
+const int buttonPin = 2;  
+const int irLED = 3; 
 byte segPins[] = {A3, A4, 4, 5, A5, A2, A1}; //7-seg LED segment display
 
 //CHANGEABLE VARIABLE:
@@ -180,7 +178,7 @@ bool read_button() {
     //  interrupt has been raised on this button so now need to complete
     // the button  read process, ie wait until it has been released
     // and debounce time elapsed
-    button_reading = digitalRead(PUSHBUTTON_PIN);
+    button_reading = digitalRead(buttonPin);
     if (button_reading == HIGH)   {
       // switch is pressed, so start/restart wait for button relealse, plus   end of debounce process
       switching_pending = true;
@@ -204,12 +202,13 @@ void   button_interrupt_handler()
   if (initialisation_complete == true)
   { //  all variables are initialised so we are okay to continue to process this interrupt
     if (interrupt_process_status == !triggered) {
-      if (digitalRead(PUSHBUTTON_PIN) == HIGH) {
+      if (digitalRead(buttonPin) == HIGH) {
         // button   pressed, so we can start the read on/off + debounce cycle wich will be completed by the button_read() function.
         interrupt_process_status   = triggered;  // keep this ISR 'quiet' until button read fully completed
         noInterrupts();
         while (read_button() != true){}; //EXIT LOOP - ie. button is pressed & released
         num_Shots++;
+        Serial.println("shot");
         //reenable interrupt:
         interrupt_process_status   = !triggered;
         interrupts();
@@ -226,11 +225,12 @@ void setup() {
   Serial.begin(115200);
   
   //enable button:
-  pinMode(PUSHBUTTON_PIN, INPUT);
-  attachInterrupt(digitalPinToInterrupt(PUSHBUTTON_PIN), button_interrupt_handler, interrupt_trigger_type);
+  pinMode(buttonPin, INPUT);
+  attachInterrupt(digitalPinToInterrupt(buttonPin), button_interrupt_handler, interrupt_trigger_type);
                   
   //enable IR LED:
-  pinMode(IR_SEND_PIN, OUTPUT);  
+  pinMode(irLED, OUTPUT);
+  IrSender.begin(irLED, ENABLE_LED_FEEDBACK, USE_DEFAULT_FEEDBACK_LED_PIN); //enable IR LED
   
   //enable LED 7 seg display:
   pinMode(13,OUTPUT);
@@ -392,8 +392,7 @@ void loop() {
   //while there are pending shots to be processed, send IR LED to opponent, toggle Ammo display & send data pkt to relay node
   if (num_Shots > 0) {
     num_Shots--;
-    sendNECMinimal(IR_SEND_PIN, 0, 2 ,0); //Send IR LED -> Command sent: 0x02
-    //IrSender.sendNEC(sAddress, 0x02, 0); //Send IR LED -> Command sent: 0x02
+    IrSender.sendNEC(sAddress, 0x01, 0); //Send IR LED -> Command sent: 0x01
     toggle_Ammo_display(); //Change ammo count displayed on 7-seg LED
 
     // ===               DATA PACKET              ===

@@ -210,6 +210,7 @@ void   button_interrupt_handler()
         noInterrupts();
         while (read_button() != true){}; //EXIT LOOP - ie. button is pressed & released
         num_Shots++;
+        Serial.println("shot");
         //reenable interrupt:
         interrupt_process_status   = !triggered;
         interrupts();
@@ -337,21 +338,10 @@ void sevsegSetNumber(int num){
   }
 }
 
-void toggle_Ammo_display(){
-    if(ammo > 0) {
-      ammo-=1; //minus one for ammo and display this number on led segment display + send this info to visualiser
-    }
-    //ammo = 0; if user reload, reset ammo to 6
-    else {
-      ammo = 6;
-    } 
-    sevsegSetNumber(ammo);
-}
-
+int stored_Num_Shots = 0;
 //This function sends data pkt to relay node till ack:
 void send_data_pkt(){
-    
-    data[0] = 1; //set data pkt 1st bit to '1' - ie. player is shooting
+    data[0] = stored_Num_Shots;
     bool is_ack = false;
     while (!is_ack) // packet will keep sending until it is acknowledged by laptop
     {
@@ -377,6 +367,17 @@ void send_data_pkt(){
     }
 }
 
+void toggle_Ammo_display(){
+    if(ammo > 0) {
+      ammo -= stored_Num_Shots; //minus one for ammo and display this number on led segment display + send this info to visualiser
+    }
+    //ammo = 0; if user reload, reset ammo to 6
+    else {
+      ammo = 6;
+    } 
+    sevsegSetNumber(ammo);
+}
+
 // ================================================================
 // ===               MAIN LOOP              ===
 // ================================================================
@@ -391,11 +392,14 @@ void loop() {
       
   //while there are pending shots to be processed, send IR LED to opponent, toggle Ammo display & send data pkt to relay node
   if (num_Shots > 0) {
-    num_Shots--;
-    sendNECMinimal(IR_SEND_PIN, 0, 2 ,0); //Send IR LED -> Command sent: 0x02
-    //IrSender.sendNEC(sAddress, 0x02, 0); //Send IR LED -> Command sent: 0x02
+    int stored_Num_Shots = num_Shots;
+    num_Shots -= stored_Num_Shots;
+    for (int i  = 0; i < stored_Num_Shots; i++) {
+          sendNECMinimal(IR_SEND_PIN, 0, 1 ,0); //Send IR LED -> Command sent: 0x01 //P2 sents '1' to P1
+    }
+    //IrSender.sendNEC(sAddress, 0x01, 0); //Send IR LED -> Command sent: 0x01
     toggle_Ammo_display(); //Change ammo count displayed on 7-seg LED
-
+    
     // ===               DATA PACKET              ===
     send_data_pkt(); //Send pkt to relay node
   }
