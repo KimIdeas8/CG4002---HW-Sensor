@@ -32,12 +32,10 @@ typedef struct
   int acc_x;
   int acc_y;
   int acc_z;
-  int flex_1;
-  int flex_2;
   uint16_t crc;             // Cyclic redundancy check (CRC-16)
 } BLEPacket; 
 
-const unsigned int PACKET_SIZE = 20;
+const unsigned int PACKET_SIZE = 16;
 
 uint8_t serial_buffer[PACKET_SIZE];
 BLEPacket* curr_packet;
@@ -101,8 +99,6 @@ BLEPacket generatePacket(PacketType packet_type, int* data)
   p.acc_x = data[3];
   p.acc_y = data[4];
   p.acc_z = data[5];
-  p.flex_1 = data[6];
-  p.flex_2 = data[7];
   p.crc = 0;
   uint16_t calculatedCRC = crcCalc((uint8_t*)&p);
   p.crc = calculatedCRC;
@@ -388,8 +384,8 @@ void loop() {
   else
   {
 
-    int data[8];
-    for (int i = 0; i < 8; i++)
+    int data[6];
+    for (int i = 0; i < 6; i++)
     {
       data[i] = 0; 
     }
