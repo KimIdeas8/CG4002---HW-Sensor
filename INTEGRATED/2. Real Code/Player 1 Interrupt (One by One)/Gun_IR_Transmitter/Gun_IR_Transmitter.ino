@@ -56,7 +56,7 @@ typedef struct
 /*---------------- Global variables ----------------*/
 
 const unsigned int PACKET_SIZE = 16;
-const unsigned int PKT_THRESHOLD = 5;
+const unsigned int PKT_THRESHOLD = 10;
 const int default_data[] = {0, 0, 0, 0, 0, 0};
 const int shoot_data[] = {1, 0, 0, 0, 0, 0};
 
