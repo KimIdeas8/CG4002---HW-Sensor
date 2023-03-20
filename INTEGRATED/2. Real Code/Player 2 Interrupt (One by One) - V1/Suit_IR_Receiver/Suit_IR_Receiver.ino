@@ -46,17 +46,15 @@ typedef struct
   int acc_x;
   int acc_y;
   int acc_z;
-  int flex_1;
-  int flex_2;
   uint16_t crc;             // Cyclic redundancy check (CRC-16)
 } BLEPacket;
 
 /*---------------- Global variables ----------------*/
 
-const unsigned int PACKET_SIZE = 20;
+const unsigned int PACKET_SIZE = 16;
 const unsigned int PKT_THRESHOLD = 5;
-const int default_data[] = {0, 0, 0, 0, 0, 0, 0, 0};
-const int shot_data[] = {1, 0, 0, 0, 0, 0, 0, 0};
+const int default_data[] = {0, 0, 0, 0, 0, 0};
+const int shot_data[] = {1, 0, 0, 0, 0, 0};
 
 static unsigned int health = 100;
 static unsigned int shotCount = 0;
@@ -120,8 +118,6 @@ BLEPacket generatePacket(PacketType packet_type, int* data)
   p.acc_x = data[3];
   p.acc_y = data[4];
   p.acc_z = data[5];
-  p.flex_1 = data[6];
-  p.flex_2 = data[7];
   p.crc = 0;
   uint16_t calculatedCRC = crcCalc((uint8_t*)&p);
   p.crc = calculatedCRC;
@@ -141,7 +137,7 @@ void sendDefaultPacket(PacketType packet_type)
 
 void sendDataPacket()
 {
-  int data[] = {counter, 0, 0, 0, 0, 0, 0, 0};
+  int data[] = {counter, 0, 0, 0, 0, 0};
   sendPacket(DATA, data);
 }
 

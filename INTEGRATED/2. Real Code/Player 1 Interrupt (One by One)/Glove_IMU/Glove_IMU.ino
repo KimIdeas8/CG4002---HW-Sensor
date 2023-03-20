@@ -107,7 +107,7 @@ BLEPacket generatePacket(PacketType packet_type, int* data)
 
 void generateDefaultPackets()
 {
-  int data[] = {0, 0, 0, 0, 0, 0, 0, 0};
+  int data[] = {0, 0, 0, 0, 0, 0};
   for (int i = 0; i < 3; i++)
   {
     default_packets[i] = generatePacket(PacketType(i), data);
@@ -265,7 +265,7 @@ void setup() {
   //calc_IMU_error();
   
   generateDefaultPackets();
-  threeWayHandshake();
+  //threeWayHandshake();
 }
 
 // ================================================================
@@ -377,9 +377,10 @@ void loop() {
   
   delay(10); // frequency of 20Hz - take average of 5 samples @ 100Hz
   
+  threeWayHandshake();
+  
   if (Serial.available()) {
     is_connected = false;
-    threeWayHandshake();
   }
   else
   {
