@@ -8,7 +8,6 @@ float GyroX, GyroY, GyroZ;
 float AccErrorX, AccErrorY, AccErrorZ, GyroErrorX, GyroErrorY, GyroErrorZ = 0;
 float AccXSum, AccYSum, AccZSum, GyroXSum, GyroYSum, GyroZSum = 0;
 float AccXAve, AccYAve, AccZAve, GyroXAve, GyroYAve, GyroZAve = 0;
-float prev_GyroXAve, prev_GyroYAve, prev_GyroZAve, prev_AccXAve, prev_AccYAve, prev_AccZAve = 0;
 float GyroXVector, GyroYVector, GyroZVector, AccXVector, AccYVector, AccZVector = 0;
 int count = 0;
 int c = 0;
@@ -324,15 +323,6 @@ void get_Ave_Acc_Gyro(){
     GyroZAve = GyroZSum / 5;
 }
 
-void get_Vector_Acc_Gyro(){
-    GyroXVector = GyroXAve - prev_GyroXAve;
-    GyroYVector = GyroYAve - prev_GyroYAve;
-    GyroZVector = GyroZAve - prev_GyroZAve;
-    AccXVector = AccXAve - prev_AccXAve;
-    AccYVector = AccYAve - prev_AccYAve;
-    AccZVector = AccZAve - prev_AccZAve;
-}
-
 void reset_Sum_Acc_Gyro(){
     AccXSum = 0;
     AccYSum = 0;
@@ -340,15 +330,6 @@ void reset_Sum_Acc_Gyro(){
     GyroXSum = 0;
     GyroYSum = 0;
     GyroZSum = 0;
-}
-
-void store_curr_Ave(){
-    prev_GyroXAve = GyroXAve;
-    prev_GyroYAve = GyroYAve;
-    prev_GyroZAve = GyroZAve;
-    prev_AccXAve = AccXAve;
-    prev_AccYAve = AccYAve;
-    prev_AccZAve = AccZAve;
 }
 
 // Function to swap two integers
@@ -398,21 +379,19 @@ void loop() {
 
     count++;
     count%=5;
-    if(count == 4) {
+    if(count == 0) {
       
       get_Ave_Acc_Gyro(); //calc Ave value of Gyro and Acc from the sums of all 5 samples
-      get_Vector_Acc_Gyro(); //compare with previous Ave values to get differences
       
       // store them to data:
-      data[0] = GyroXVector; 
-      data[1] = GyroYVector;
-      data[2] = GyroZVector;
-      data[3] = AccXVector*100;
-      data[4] = AccYVector*100;
-      data[5] = AccZVector*100;
-      
+      data[0] = GyroXAve; 
+      data[1] = GyroYAve;
+      data[2] = GyroZAve;
+      data[3] = AccXAve*100;
+      data[4] = AccYAve*100;
+      data[5] = AccZAve*100;
+
       reset_Sum_Acc_Gyro(); //reset sums for next 5 samples
-      store_curr_Ave(); //store current Ave values for next 5 samples comparison
       
       sendDataPacket(data); 
     }
