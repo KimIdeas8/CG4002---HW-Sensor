@@ -281,8 +281,8 @@ void read_Acc(){
     AccY = (Wire.read() << 8 | Wire.read()) / 16384.0; //Y-axis value
     AccZ = (Wire.read() << 8 | Wire.read()) / 16384.0; //Z-axis value
     //Correct the outputs with the calc error values:
-    AccX = (AccX - 1.05) * 9.81; //Convert to ms^-2
-    AccY = (AccY - 1.00) * 9.81;
+    AccX = (AccX - 0.05) * 9.81; //Convert to ms^-2
+    AccY = (AccY - 0.00) * 9.81;
     AccZ = (AccZ - 1.07)* 9.81;
 }
 

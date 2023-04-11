@@ -8,6 +8,7 @@ float GyroX, GyroY, GyroZ;
 float AccErrorX, AccErrorY, AccErrorZ, GyroErrorX, GyroErrorY, GyroErrorZ = 0;
 float AccXSum, AccYSum, AccZSum, GyroXSum, GyroYSum, GyroZSum = 0;
 float AccXAve, AccYAve, AccZAve, GyroXAve, GyroYAve, GyroZAve = 0;
+float prev_GyroXAve, prev_GyroYAve, prev_GyroZAve, prev_AccXAve, prev_AccYAve, prev_AccZAve = 0;
 float GyroXVector, GyroYVector, GyroZVector, AccXVector, AccYVector, AccZVector = 0;
 int count = 0;
 int c = 0;
@@ -282,8 +283,8 @@ void read_Acc(){
     AccZ = (Wire.read() << 8 | Wire.read()) / 16384.0; //Z-axis value
     //Correct the outputs with the calc error values:
     AccX = (AccX - 0.05) * 9.81; //Convert to ms^-2
-    AccY = (AccY - 0.00) * 9.81;
-    AccZ = (AccZ - 1.07)* 9.81;
+    AccY = AccY * 9.81;
+    AccZ = (AccZ - 0.07)* 9.81;
 }
 
 void get_Acc_Sum(){
@@ -314,13 +315,24 @@ void get_Gyro_Sum(){
     GyroZSum += GyroZ;
 }
 
-void get_Ave_Acc_Gyro(){
+float AccGyroPacket[6] = {0,0,0,0,0,0};
+
+void get_Mean_Acc_Gyro(){
     AccXAve = AccXSum / 5;
     AccYAve = AccYSum / 5;
     AccZAve = AccZSum / 5;
     GyroXAve = GyroXSum / 5;
     GyroYAve = GyroYSum / 5;
     GyroZAve = GyroZSum / 5;
+}
+
+void get_Vector_Acc_Gyro(){
+    GyroXVector = GyroXAve - prev_GyroXAve;
+    GyroYVector = GyroYAve - prev_GyroYAve;
+    GyroZVector = GyroZAve - prev_GyroZAve;
+    AccXVector = AccXAve - prev_AccXAve;
+    AccYVector = AccYAve - prev_AccYAve;
+    AccZVector = AccZAve - prev_AccZAve;
 }
 
 void reset_Sum_Acc_Gyro(){
@@ -330,6 +342,15 @@ void reset_Sum_Acc_Gyro(){
     GyroXSum = 0;
     GyroYSum = 0;
     GyroZSum = 0;
+}
+
+void store_curr_Ave(){
+    prev_GyroXAve = GyroXAve;
+    prev_GyroYAve = GyroYAve;
+    prev_GyroZAve = GyroZAve;
+    prev_AccXAve = AccXAve;
+    prev_AccYAve = AccYAve;
+    prev_AccZAve = AccZAve;
 }
 
 // Function to swap two integers
@@ -354,9 +375,15 @@ double median(float arr[]) {
     return (double)arr[2];
 }
 
+int sendDataCounter = 0; // tracks up to 30 times sending of live data
+bool movementDetected = false; 
+//float current_packet[5][6]; // store current (5 samples * ax,ay,az,gx,gy,gz)
+float prev_packet[5][6]; // store previous (5 samples * ax,ay,az,gx,gy,gz)
+float final_pkt[5][6]; // store prev (5 samples * ax,ay,az,gx,gy,gz) - once movement detected
+
 void loop() {
   
-  delay(10); // frequency of 20Hz - take average of 5 samples @ 100Hz
+  delay(10); // frequency of 20Hz (delay 50ms for 5 samples) - take average of 5 samples @ 100Hz
   
   threeWayHandshake();
   
@@ -371,29 +398,126 @@ void loop() {
     {
       data[i] = 0; 
     }
-
+    
     read_Acc(); // read and correct raw Acc values
     get_Acc_Sum(); // sum all 5 sample Acc values
     read_Gyro(); // read and correct raw Gyro values 
     get_Gyro_Sum(); // sum all 5 sample Gyro values
-
-    count++;
-    count%=5;
-    if(count == 0) {
+    
+    
+    // store current (5 samples * ax,ay,az,gx,gy,gz)
+    count++; //represents sampleNo - 1 2 3 4 5
+    count%=5; // 1 2 3 4 0 
+    if(count == 0) { // after every 5 samples - every 50ms, check for movement 
       
-      get_Ave_Acc_Gyro(); //calc Ave value of Gyro and Acc from the sums of all 5 samples
+      get_Mean_Acc_Gyro(); //calc Mean value of Gyro and Acc from the sums of all 5 samples
+      get_Vector_Acc_Gyro(); //compare with previous packet Mean values to get differences
       
-      // store them to data:
-      data[0] = GyroXAve; 
-      data[1] = GyroYAve;
-      data[2] = GyroZAve;
-      data[3] = AccXAve*100;
-      data[4] = AccYAve*100;
-      data[5] = AccZAve*100;
+      double absoluteSquaredDistance = sq(AccXVector) + sq(AccYVector) + sq(AccZVector);
 
+      if(absoluteSquaredDistance > 0 && movementDetected == false){  //check if pass threshold - ie. movement detected (only when not sending live data)
+        
+        movementDetected = true; // disable movementDetection from now, till all 35 data has been sent
+        
+         for (int i = 0; i < 5; i++){          // store prev - 0 1 2 3 4
+          for (int j = 0; j < 6; j++) {
+            final_pkt[i][j] = prev_packet[i][j];
+          }
+         }
+  
+      }
+      
+      // send live data every 50ms, only if movementDetected
+      if(movementDetected == true){
+        sendDataCounter++; //1-30 times
+        //from 1-30, start sending 1x6 live values:
+        if(sendDataCounter>=1 && sendDataCounter<=30){
+            data[0] = GyroX;
+            data[1] = GyroY;
+            data[2] = GyroZ;
+            data[3] = AccX;
+            data[4] = AccY;
+            data[5] = AccZ;
+        }
+        //send next 5 prev values
+        else if (sendDataCounter == 31){
+            data[0] = final_pkt[0][0];
+            data[1] = final_pkt[0][1];
+            data[2] = final_pkt[0][2];
+            data[3] = final_pkt[0][3];
+            data[4] = final_pkt[0][4];
+            data[5] = final_pkt[0][5];
+        }
+        else if (sendDataCounter == 32){
+            data[0] = final_pkt[1][0];
+            data[1] = final_pkt[1][1];
+            data[2] = final_pkt[1][2];
+            data[3] = final_pkt[1][3];
+            data[4] = final_pkt[1][4];
+            data[5] = final_pkt[1][5];
+        }
+        else if (sendDataCounter == 33){
+            data[0] = final_pkt[2][0];
+            data[1] = final_pkt[2][1];
+            data[2] = final_pkt[2][2];
+            data[3] = final_pkt[2][3];
+            data[4] = final_pkt[2][4];
+            data[5] = final_pkt[2][5];
+        }
+        else if (sendDataCounter == 34){
+            data[0] = final_pkt[3][0];
+            data[1] = final_pkt[3][1];
+            data[2] = final_pkt[3][2];
+            data[3] = final_pkt[3][3];
+            data[4] = final_pkt[3][4];
+            data[5] = final_pkt[3][5];
+        }
+        else if (sendDataCounter == 35){
+            data[0] = final_pkt[4][0];
+            data[1] = final_pkt[4][1];
+            data[2] = final_pkt[4][2];
+            data[3] = final_pkt[4][3];
+            data[4] = final_pkt[4][4];
+            data[5] = final_pkt[4][5];
+        }
+        
+        sendDataPacket(data); //send live + prev data at 50ms interval (20Hz)
+        if(sendDataCounter == 35) {
+          
+           movementDetected = false; //send only 35 times - after, re-enable movementDetection algo
+           // store prev - 0 1 2 3 4
+           for (int i = 0; i < 5; i++){
+            for (int j = 0; j < 6; j++) {
+              final_pkt[i][j] = 0;
+            }
+           }
+           sendDataCounter = 0;
+        }
+        
+      }
+       
       reset_Sum_Acc_Gyro(); //reset sums for next 5 samples
+      store_curr_Ave(); //store current Ave values for next 5 samples comparison
       
-      sendDataPacket(data); 
     }
+    
+    // store previous (5 samples * ax,ay,az,gx,gy,gz) - to prev packet at the end 
+    if(count>0){ // when count == 1,2,3,4
+      prev_packet[count-1][0] = GyroX;
+      prev_packet[count-1][1] = GyroY;
+      prev_packet[count-1][2] = GyroZ;
+      prev_packet[count-1][3] = AccX;
+      prev_packet[count-1][4] = AccY;
+      prev_packet[count-1][5] = AccZ;
+    }
+    else if (count == 0){ // when count == 5 -> 0 (after mod)
+      prev_packet[4][0] = GyroX;
+      prev_packet[4][1] = GyroY;
+      prev_packet[4][2] = GyroZ;
+      prev_packet[4][3] = AccX;
+      prev_packet[4][4] = AccY;
+      prev_packet[4][5] = AccZ;
+    }
+    
   }
 }
